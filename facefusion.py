@@ -8,3 +8,6 @@ from facefusion import core
 
 if __name__ == '__main__':
 	core.cli()
+
+# conda activate facefusion
+# python facefusion.py run --open-browser

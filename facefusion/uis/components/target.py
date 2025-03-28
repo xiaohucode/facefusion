@@ -1,3 +1,4 @@
+import time
 from typing import Optional, Tuple
 
 import gradio
@@ -67,6 +68,20 @@ def listen() -> None:
 def update(file : File) -> Tuple[gradio.Image, gradio.Video]:
 	clear_reference_faces()
 	clear_static_faces()
+	
+	# fix windows 
+	if file is not None:
+		# 延时2s
+		time.sleep(2)
+		# 冗余操作
+		for _ in range(5):
+			try:
+				with open(file.name,"rb") as f:
+					break
+			except Exception as e:
+				print(f"错误: {str(e)}")
+				time.sleep(1)
+
 	if file and is_image(file.name):
 		state_manager.set_item('target_path', file.name)
 		return gradio.Image(value = file.name, visible = True), gradio.Video(value = None, visible = False)
