@@ -9,21 +9,21 @@ import facefusion.choices
 import facefusion.jobs.job_manager
 import facefusion.jobs.job_store
 import facefusion.processors.core as processors
-from facefusion import config, content_analyser, face_classifier, face_detector, face_landmarker, face_masker, face_recognizer, inference_manager, logger, process_manager, state_manager, wording
+from facefusion import config, content_analyser, face_classifier, face_detector, face_landmarker, face_masker, face_recognizer, inference_manager, logger, process_manager, state_manager, video_manager, wording
 from facefusion.common_helper import create_int_metavar
 from facefusion.download import conditional_download_hashes, conditional_download_sources, resolve_download_url
 from facefusion.execution import has_execution_provider
 from facefusion.face_analyser import get_many_faces, get_one_face
 from facefusion.face_helper import merge_matrix, paste_back, scale_face_landmark_5, warp_face_by_face_landmark_5
-from facefusion.face_masker import create_occlusion_mask, create_static_box_mask
+from facefusion.face_masker import create_box_mask, create_occlusion_mask
 from facefusion.face_selector import find_similar_faces, sort_and_filter_faces
 from facefusion.face_store import get_reference_faces
 from facefusion.filesystem import in_directory, is_image, is_video, resolve_relative_path, same_file_extension
 from facefusion.processors import choices as processors_choices
-from facefusion.processors.typing import AgeModifierDirection, AgeModifierInputs
+from facefusion.processors.types import AgeModifierDirection, AgeModifierInputs
 from facefusion.program_helper import find_argument_group
 from facefusion.thread_helper import thread_semaphore
-from facefusion.typing import ApplyStateItem, Args, DownloadScope, Face, InferencePool, ModelOptions, ModelSet, ProcessMode, QueuePayload, UpdateProgress, VisionFrame
+from facefusion.types import ApplyStateItem, Args, DownloadScope, Face, InferencePool, ModelOptions, ModelSet, ProcessMode, QueuePayload, UpdateProgress, VisionFrame
 from facefusion.vision import match_frame_color, read_image, read_static_image, write_image
 
 
@@ -64,24 +64,27 @@ def create_static_model_set(download_scope : DownloadScope) -> ModelSet:
 
 
 def get_inference_pool() -> InferencePool:
-	model_sources = get_model_options().get('sources')
-	return inference_manager.get_inference_pool(__name__, model_sources)
+	model_names = [ state_manager.get_item('age_modifier_model') ]
+	model_source_set = get_model_options().get('sources')
+
+	return inference_manager.get_inference_pool(__name__, model_names, model_source_set)
 
 
 def clear_inference_pool() -> None:
-	inference_manager.clear_inference_pool(__name__)
+	model_names = [ state_manager.get_item('age_modifier_model') ]
+	inference_manager.clear_inference_pool(__name__, model_names)
 
 
 def get_model_options() -> ModelOptions:
-	age_modifier_model = state_manager.get_item('age_modifier_model')
-	return create_static_model_set('full').get(age_modifier_model)
+	model_name = state_manager.get_item('age_modifier_model')
+	return create_static_model_set('full').get(model_name)
 
 
 def register_args(program : ArgumentParser) -> None:
 	group_processors = find_argument_group(program, 'processors')
 	if group_processors:
-		group_processors.add_argument('--age-modifier-model', help = wording.get('help.age_modifier_model'), default = config.get_str_value('processors.age_modifier_model', 'styleganex_age'), choices = processors_choices.age_modifier_models)
-		group_processors.add_argument('--age-modifier-direction', help = wording.get('help.age_modifier_direction'), type = int, default = config.get_int_value('processors.age_modifier_direction', '0'), choices = processors_choices.age_modifier_direction_range, metavar = create_int_metavar(processors_choices.age_modifier_direction_range))
+		group_processors.add_argument('--age-modifier-model', help = wording.get('help.age_modifier_model'), default = config.get_str_value('processors', 'age_modifier_model', 'styleganex_age'), choices = processors_choices.age_modifier_models)
+		group_processors.add_argument('--age-modifier-direction', help = wording.get('help.age_modifier_direction'), type = int, default = config.get_int_value('processors', 'age_modifier_direction', '0'), choices = processors_choices.age_modifier_direction_range, metavar = create_int_metavar(processors_choices.age_modifier_direction_range))
 		facefusion.jobs.job_store.register_step_keys([ 'age_modifier_model', 'age_modifier_direction' ])
 
 
@@ -91,10 +94,10 @@ def apply_args(args : Args, apply_state_item : ApplyStateItem) -> None:
 
 
 def pre_check() -> bool:
-	model_hashes = get_model_options().get('hashes')
-	model_sources = get_model_options().get('sources')
+	model_hash_set = get_model_options().get('hashes')
+	model_source_set = get_model_options().get('sources')
 
-	return conditional_download_hashes(model_hashes) and conditional_download_sources(model_sources)
+	return conditional_download_hashes(model_hash_set) and conditional_download_sources(model_source_set)
 
 
 def pre_process(mode : ProcessMode) -> bool:
@@ -104,7 +107,7 @@ def pre_process(mode : ProcessMode) -> bool:
 	if mode == 'output' and not in_directory(state_manager.get_item('output_path')):
 		logger.error(wording.get('specify_image_or_video_output') + wording.get('exclamation_mark'), __name__)
 		return False
-	if mode == 'output' and not same_file_extension([ state_manager.get_item('target_path'), state_manager.get_item('output_path') ]):
+	if mode == 'output' and not same_file_extension(state_manager.get_item('target_path'), state_manager.get_item('output_path')):
 		logger.error(wording.get('match_target_and_output_extension') + wording.get('exclamation_mark'), __name__)
 		return False
 	return True
@@ -112,6 +115,7 @@ def pre_process(mode : ProcessMode) -> bool:
 
 def post_process() -> None:
 	read_static_image.cache_clear()
+	video_manager.clear_video_pool()
 	if state_manager.get_item('video_memory_strategy') in [ 'strict', 'moderate' ]:
 		clear_inference_pool()
 	if state_manager.get_item('video_memory_strategy') == 'strict':
@@ -131,7 +135,7 @@ def modify_age(target_face : Face, temp_vision_frame : VisionFrame) -> VisionFra
 	extend_face_landmark_5 = scale_face_landmark_5(face_landmark_5, 0.875)
 	extend_vision_frame, extend_affine_matrix = warp_face_by_face_landmark_5(temp_vision_frame, extend_face_landmark_5, model_templates.get('target_with_background'), model_sizes.get('target_with_background'))
 	extend_vision_frame_raw = extend_vision_frame.copy()
-	box_mask = create_static_box_mask(model_sizes.get('target_with_background'), state_manager.get_item('face_mask_blur'), (0, 0, 0, 0))
+	box_mask = create_box_mask(extend_vision_frame, state_manager.get_item('face_mask_blur'), (0, 0, 0, 0))
 	crop_masks =\
 	[
 		box_mask
@@ -145,7 +149,7 @@ def modify_age(target_face : Face, temp_vision_frame : VisionFrame) -> VisionFra
 
 	crop_vision_frame = prepare_vision_frame(crop_vision_frame)
 	extend_vision_frame = prepare_vision_frame(extend_vision_frame)
-	age_modifier_direction = numpy.array(numpy.interp(state_manager.get_item('age_modifier_direction'), [-100, 100], [2.5, -2.5])).astype(numpy.float32)
+	age_modifier_direction = numpy.array(numpy.interp(state_manager.get_item('age_modifier_direction'), [ -100, 100 ], [ 2.5, -2.5 ])).astype(numpy.float32)
 	extend_vision_frame = forward(crop_vision_frame, extend_vision_frame, age_modifier_direction)
 	extend_vision_frame = normalize_extend_frame(extend_vision_frame)
 	extend_vision_frame = match_frame_color(extend_vision_frame_raw, extend_vision_frame)

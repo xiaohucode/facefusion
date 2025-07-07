@@ -8,20 +8,20 @@ import numpy
 import facefusion.jobs.job_manager
 import facefusion.jobs.job_store
 import facefusion.processors.core as processors
-from facefusion import config, content_analyser, face_classifier, face_detector, face_landmarker, face_masker, face_recognizer, inference_manager, logger, process_manager, state_manager, wording
+from facefusion import config, content_analyser, face_classifier, face_detector, face_landmarker, face_masker, face_recognizer, inference_manager, logger, process_manager, state_manager, video_manager, wording
 from facefusion.common_helper import create_float_metavar, create_int_metavar
 from facefusion.download import conditional_download_hashes, conditional_download_sources, resolve_download_url
 from facefusion.face_analyser import get_many_faces, get_one_face
 from facefusion.face_helper import paste_back, warp_face_by_face_landmark_5
-from facefusion.face_masker import create_occlusion_mask, create_static_box_mask
+from facefusion.face_masker import create_box_mask, create_occlusion_mask
 from facefusion.face_selector import find_similar_faces, sort_and_filter_faces
 from facefusion.face_store import get_reference_faces
 from facefusion.filesystem import in_directory, is_image, is_video, resolve_relative_path, same_file_extension
 from facefusion.processors import choices as processors_choices
-from facefusion.processors.typing import FaceEnhancerInputs, FaceEnhancerWeight
+from facefusion.processors.types import FaceEnhancerInputs, FaceEnhancerWeight
 from facefusion.program_helper import find_argument_group
 from facefusion.thread_helper import thread_semaphore
-from facefusion.typing import ApplyStateItem, Args, DownloadScope, Face, InferencePool, ModelOptions, ModelSet, ProcessMode, QueuePayload, UpdateProgress, VisionFrame
+from facefusion.types import ApplyStateItem, Args, DownloadScope, Face, InferencePool, ModelOptions, ModelSet, ProcessMode, QueuePayload, UpdateProgress, VisionFrame
 from facefusion.vision import read_image, read_static_image, write_image
 
 
@@ -131,7 +131,7 @@ def create_static_model_set(download_scope : DownloadScope) -> ModelSet:
 					'path': resolve_relative_path('../.assets/models/gpen_bfr_256.onnx')
 				}
 			},
-			'template': 'arcface_128_v2',
+			'template': 'arcface_128',
 			'size': (256, 256)
 		},
 		'gpen_bfr_512':
@@ -222,25 +222,28 @@ def create_static_model_set(download_scope : DownloadScope) -> ModelSet:
 
 
 def get_inference_pool() -> InferencePool:
-	model_sources = get_model_options().get('sources')
-	return inference_manager.get_inference_pool(__name__, model_sources)
+	model_names = [ state_manager.get_item('face_enhancer_model') ]
+	model_source_set = get_model_options().get('sources')
+
+	return inference_manager.get_inference_pool(__name__, model_names, model_source_set)
 
 
 def clear_inference_pool() -> None:
-	inference_manager.clear_inference_pool(__name__)
+	model_names = [ state_manager.get_item('face_enhancer_model') ]
+	inference_manager.clear_inference_pool(__name__, model_names)
 
 
 def get_model_options() -> ModelOptions:
-	face_enhancer_model = state_manager.get_item('face_enhancer_model')
-	return create_static_model_set('full').get(face_enhancer_model)
+	model_name = state_manager.get_item('face_enhancer_model')
+	return create_static_model_set('full').get(model_name)
 
 
 def register_args(program : ArgumentParser) -> None:
 	group_processors = find_argument_group(program, 'processors')
 	if group_processors:
-		group_processors.add_argument('--face-enhancer-model', help = wording.get('help.face_enhancer_model'), default = config.get_str_value('processors.face_enhancer_model', 'gfpgan_1.4'), choices = processors_choices.face_enhancer_models)
-		group_processors.add_argument('--face-enhancer-blend', help = wording.get('help.face_enhancer_blend'), type = int, default = config.get_int_value('processors.face_enhancer_blend', '80'), choices = processors_choices.face_enhancer_blend_range, metavar = create_int_metavar(processors_choices.face_enhancer_blend_range))
-		group_processors.add_argument('--face-enhancer-weight', help = wording.get('help.face_enhancer_weight'), type = float, default = config.get_float_value('processors.face_enhancer_weight', '1.0'), choices = processors_choices.face_enhancer_weight_range, metavar = create_float_metavar(processors_choices.face_enhancer_weight_range))
+		group_processors.add_argument('--face-enhancer-model', help = wording.get('help.face_enhancer_model'), default = config.get_str_value('processors', 'face_enhancer_model', 'gfpgan_1.4'), choices = processors_choices.face_enhancer_models)
+		group_processors.add_argument('--face-enhancer-blend', help = wording.get('help.face_enhancer_blend'), type = int, default = config.get_int_value('processors', 'face_enhancer_blend', '80'), choices = processors_choices.face_enhancer_blend_range, metavar = create_int_metavar(processors_choices.face_enhancer_blend_range))
+		group_processors.add_argument('--face-enhancer-weight', help = wording.get('help.face_enhancer_weight'), type = float, default = config.get_float_value('processors', 'face_enhancer_weight', '1.0'), choices = processors_choices.face_enhancer_weight_range, metavar = create_float_metavar(processors_choices.face_enhancer_weight_range))
 		facefusion.jobs.job_store.register_step_keys([ 'face_enhancer_model', 'face_enhancer_blend', 'face_enhancer_weight' ])
 
 
@@ -251,10 +254,10 @@ def apply_args(args : Args, apply_state_item : ApplyStateItem) -> None:
 
 
 def pre_check() -> bool:
-	model_hashes = get_model_options().get('hashes')
-	model_sources = get_model_options().get('sources')
+	model_hash_set = get_model_options().get('hashes')
+	model_source_set = get_model_options().get('sources')
 
-	return conditional_download_hashes(model_hashes) and conditional_download_sources(model_sources)
+	return conditional_download_hashes(model_hash_set) and conditional_download_sources(model_source_set)
 
 
 def pre_process(mode : ProcessMode) -> bool:
@@ -264,7 +267,7 @@ def pre_process(mode : ProcessMode) -> bool:
 	if mode == 'output' and not in_directory(state_manager.get_item('output_path')):
 		logger.error(wording.get('specify_image_or_video_output') + wording.get('exclamation_mark'), __name__)
 		return False
-	if mode == 'output' and not same_file_extension([ state_manager.get_item('target_path'), state_manager.get_item('output_path') ]):
+	if mode == 'output' and not same_file_extension(state_manager.get_item('target_path'), state_manager.get_item('output_path')):
 		logger.error(wording.get('match_target_and_output_extension') + wording.get('exclamation_mark'), __name__)
 		return False
 	return True
@@ -272,6 +275,7 @@ def pre_process(mode : ProcessMode) -> bool:
 
 def post_process() -> None:
 	read_static_image.cache_clear()
+	video_manager.clear_video_pool()
 	if state_manager.get_item('video_memory_strategy') in [ 'strict', 'moderate' ]:
 		clear_inference_pool()
 	if state_manager.get_item('video_memory_strategy') == 'strict':
@@ -287,7 +291,7 @@ def enhance_face(target_face : Face, temp_vision_frame : VisionFrame) -> VisionF
 	model_template = get_model_options().get('template')
 	model_size = get_model_options().get('size')
 	crop_vision_frame, affine_matrix = warp_face_by_face_landmark_5(temp_vision_frame, target_face.landmark_set.get('5/68'), model_template, model_size)
-	box_mask = create_static_box_mask(crop_vision_frame.shape[:2][::-1], state_manager.get_item('face_mask_blur'), (0, 0, 0, 0))
+	box_mask = create_box_mask(crop_vision_frame, state_manager.get_item('face_mask_blur'), (0, 0, 0, 0))
 	crop_masks =\
 	[
 		box_mask
@@ -329,6 +333,7 @@ def has_weight_input() -> bool:
 	for deep_swapper_input in face_enhancer.get_inputs():
 		if deep_swapper_input.name == 'weight':
 			return True
+
 	return False
 
 

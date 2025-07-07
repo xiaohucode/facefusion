@@ -5,9 +5,9 @@ import cv2
 import numpy
 from cv2.typing import Size
 
-from facefusion.typing import Anchors, Angle, BoundingBox, Distance, FaceDetectorModel, FaceLandmark5, FaceLandmark68, Mask, Matrix, Points, Scale, Score, Translation, VisionFrame, WarpTemplate, WarpTemplateSet
+from facefusion.types import Anchors, Angle, BoundingBox, Distance, FaceDetectorModel, FaceLandmark5, FaceLandmark68, Mask, Matrix, Points, Scale, Score, Translation, VisionFrame, WarpTemplate, WarpTemplateSet
 
-WARP_TEMPLATES : WarpTemplateSet =\
+WARP_TEMPLATE_SET : WarpTemplateSet =\
 {
 	'arcface_112_v1': numpy.array(
 	[
@@ -25,7 +25,7 @@ WARP_TEMPLATES : WarpTemplateSet =\
 		[ 0.37097589, 0.82469196 ],
 		[ 0.63151696, 0.82325089 ]
 	]),
-	'arcface_128_v2': numpy.array(
+	'arcface_128': numpy.array(
 	[
 		[ 0.36167656, 0.40387734 ],
 		[ 0.63696719, 0.40235469 ],
@@ -69,7 +69,7 @@ WARP_TEMPLATES : WarpTemplateSet =\
 
 
 def estimate_matrix_by_face_landmark_5(face_landmark_5 : FaceLandmark5, warp_template : WarpTemplate, crop_size : Size) -> Matrix:
-	normed_warp_template = WARP_TEMPLATES.get(warp_template) * crop_size
+	normed_warp_template = WARP_TEMPLATE_SET.get(warp_template) * crop_size
 	affine_matrix = cv2.estimateAffinePartial2D(face_landmark_5, normed_warp_template, method = cv2.RANSAC, ransacReprojThreshold = 100)[0]
 	return affine_matrix
 
@@ -99,15 +99,35 @@ def warp_face_by_translation(temp_vision_frame : VisionFrame, translation : Tran
 
 
 def paste_back(temp_vision_frame : VisionFrame, crop_vision_frame : VisionFrame, crop_mask : Mask, affine_matrix : Matrix) -> VisionFrame:
+	paste_bounding_box, paste_matrix = calc_paste_area(temp_vision_frame, crop_vision_frame, affine_matrix)
+	x_min, y_min, x_max, y_max = paste_bounding_box
+	paste_width = x_max - x_min
+	paste_height = y_max - y_min
+	inverse_mask = cv2.warpAffine(crop_mask, paste_matrix, (paste_width, paste_height)).clip(0, 1)
+	inverse_mask = numpy.expand_dims(inverse_mask, axis = -1)
+	inverse_vision_frame = cv2.warpAffine(crop_vision_frame, paste_matrix, (paste_width, paste_height), borderMode = cv2.BORDER_REPLICATE)
+	temp_vision_frame = temp_vision_frame.copy()
+	paste_vision_frame = temp_vision_frame[y_min:y_max, x_min:x_max]
+	paste_vision_frame = paste_vision_frame * (1 - inverse_mask) + inverse_vision_frame * inverse_mask
+	temp_vision_frame[y_min:y_max, x_min:x_max] = paste_vision_frame.astype(temp_vision_frame.dtype)
+	return temp_vision_frame
+
+
+def calc_paste_area(temp_vision_frame : VisionFrame, crop_vision_frame : VisionFrame, affine_matrix : Matrix) -> Tuple[BoundingBox, Matrix]:
+	temp_height, temp_width = temp_vision_frame.shape[:2]
+	crop_height, crop_width = crop_vision_frame.shape[:2]
 	inverse_matrix = cv2.invertAffineTransform(affine_matrix)
-	temp_size = temp_vision_frame.shape[:2][::-1]
-	inverse_mask = cv2.warpAffine(crop_mask, inverse_matrix, temp_size).clip(0, 1)
-	inverse_vision_frame = cv2.warpAffine(crop_vision_frame, inverse_matrix, temp_size, borderMode = cv2.BORDER_REPLICATE)
-	paste_vision_frame = temp_vision_frame.copy()
-	paste_vision_frame[:, :, 0] = inverse_mask * inverse_vision_frame[:, :, 0] + (1 - inverse_mask) * temp_vision_frame[:, :, 0]
-	paste_vision_frame[:, :, 1] = inverse_mask * inverse_vision_frame[:, :, 1] + (1 - inverse_mask) * temp_vision_frame[:, :, 1]
-	paste_vision_frame[:, :, 2] = inverse_mask * inverse_vision_frame[:, :, 2] + (1 - inverse_mask) * temp_vision_frame[:, :, 2]
-	return paste_vision_frame
+	crop_points = numpy.array([ [ 0, 0 ], [ crop_width, 0 ], [ crop_width, crop_height ], [ 0, crop_height ] ])
+	paste_region_points = transform_points(crop_points, inverse_matrix)
+	min_point = numpy.floor(paste_region_points.min(axis = 0)).astype(int)
+	max_point = numpy.ceil(paste_region_points.max(axis = 0)).astype(int)
+	x_min, y_min = numpy.clip(min_point, 0, [ temp_width, temp_height ])
+	x_max, y_max = numpy.clip(max_point, 0, [ temp_width, temp_height ])
+	paste_bounding_box = numpy.array([ x_min, y_min, x_max, y_max ])
+	paste_matrix = inverse_matrix.copy()
+	paste_matrix[0, 2] -= x_min
+	paste_matrix[1, 2] -= y_min
+	return paste_bounding_box, paste_matrix
 
 
 @lru_cache(maxsize = None)
@@ -208,9 +228,9 @@ def estimate_face_angle(face_landmark_68 : FaceLandmark68) -> Angle:
 	return face_angle
 
 
-def apply_nms(bounding_boxes : List[BoundingBox], face_scores : List[Score], score_threshold : float, nms_threshold : float) -> Sequence[int]:
+def apply_nms(bounding_boxes : List[BoundingBox], scores : List[Score], score_threshold : float, nms_threshold : float) -> Sequence[int]:
 	normed_bounding_boxes = [ (x1, y1, x2 - x1, y2 - y1) for (x1, y1, x2, y2) in bounding_boxes ]
-	keep_indices = cv2.dnn.NMSBoxes(normed_bounding_boxes, face_scores, score_threshold = score_threshold, nms_threshold = nms_threshold)
+	keep_indices = cv2.dnn.NMSBoxes(normed_bounding_boxes, scores, score_threshold = score_threshold, nms_threshold = nms_threshold)
 	return keep_indices
 
 

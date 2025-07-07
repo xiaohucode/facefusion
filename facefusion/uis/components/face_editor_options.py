@@ -6,7 +6,7 @@ from facefusion import state_manager, wording
 from facefusion.common_helper import calc_float_step
 from facefusion.processors import choices as processors_choices
 from facefusion.processors.core import load_processor_module
-from facefusion.processors.typing import FaceEditorModel
+from facefusion.processors.types import FaceEditorModel
 from facefusion.uis.core import get_ui_component, register_ui_component
 
 FACE_EDITOR_MODEL_DROPDOWN : Optional[gradio.Dropdown] = None
@@ -198,7 +198,7 @@ def listen() -> None:
 
 	processors_checkbox_group = get_ui_component('processors_checkbox_group')
 	if processors_checkbox_group:
-		processors_checkbox_group.change(remote_update, inputs = processors_checkbox_group, outputs = [FACE_EDITOR_MODEL_DROPDOWN, FACE_EDITOR_EYEBROW_DIRECTION_SLIDER, FACE_EDITOR_EYE_GAZE_HORIZONTAL_SLIDER, FACE_EDITOR_EYE_GAZE_VERTICAL_SLIDER, FACE_EDITOR_EYE_OPEN_RATIO_SLIDER, FACE_EDITOR_LIP_OPEN_RATIO_SLIDER, FACE_EDITOR_MOUTH_GRIM_SLIDER, FACE_EDITOR_MOUTH_POUT_SLIDER, FACE_EDITOR_MOUTH_PURSE_SLIDER, FACE_EDITOR_MOUTH_SMILE_SLIDER, FACE_EDITOR_MOUTH_POSITION_HORIZONTAL_SLIDER, FACE_EDITOR_MOUTH_POSITION_VERTICAL_SLIDER, FACE_EDITOR_HEAD_PITCH_SLIDER, FACE_EDITOR_HEAD_YAW_SLIDER, FACE_EDITOR_HEAD_ROLL_SLIDER])
+		processors_checkbox_group.change(remote_update, inputs = processors_checkbox_group, outputs = [ FACE_EDITOR_MODEL_DROPDOWN, FACE_EDITOR_EYEBROW_DIRECTION_SLIDER, FACE_EDITOR_EYE_GAZE_HORIZONTAL_SLIDER, FACE_EDITOR_EYE_GAZE_VERTICAL_SLIDER, FACE_EDITOR_EYE_OPEN_RATIO_SLIDER, FACE_EDITOR_LIP_OPEN_RATIO_SLIDER, FACE_EDITOR_MOUTH_GRIM_SLIDER, FACE_EDITOR_MOUTH_POUT_SLIDER, FACE_EDITOR_MOUTH_PURSE_SLIDER, FACE_EDITOR_MOUTH_SMILE_SLIDER, FACE_EDITOR_MOUTH_POSITION_HORIZONTAL_SLIDER, FACE_EDITOR_MOUTH_POSITION_VERTICAL_SLIDER, FACE_EDITOR_HEAD_PITCH_SLIDER, FACE_EDITOR_HEAD_YAW_SLIDER, FACE_EDITOR_HEAD_ROLL_SLIDER ])
 
 
 def remote_update(processors : List[str]) -> Tuple[gradio.Dropdown, gradio.Slider, gradio.Slider, gradio.Slider, gradio.Slider, gradio.Slider, gradio.Slider, gradio.Slider, gradio.Slider, gradio.Slider, gradio.Slider, gradio.Slider, gradio.Slider, gradio.Slider, gradio.Slider]:

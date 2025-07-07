@@ -5,7 +5,7 @@ FaceFusion
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/facefusion/facefusion/ci.yml.svg?branch=master)](https://github.com/facefusion/facefusion/actions?query=workflow:ci)
 [![Coverage Status](https://img.shields.io/coveralls/facefusion/facefusion.svg)](https://coveralls.io/r/facefusion/facefusion)
-![License](https://img.shields.io/badge/license-MIT-green)
+![License](https://img.shields.io/badge/license-OpenRAIL--AS-green)
 
 
 Preview
@@ -37,6 +37,7 @@ commands:
     headless-run                                  run the program in headless mode
     batch-run                                     run the program in batch mode
     force-download                                force automate downloads and exit
+    benchmark                                     benchmark the program
     job-list                                      list jobs by status
     job-create                                    create a drafted job
     job-submit                                    submit a drafted job to become a queued job

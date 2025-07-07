@@ -1,10 +1,11 @@
 import signal
 import sys
 from time import sleep
+from types import FrameType
 
 from facefusion import process_manager, state_manager
 from facefusion.temp_helper import clear_temp_directory
-from facefusion.typing import ErrorCode
+from facefusion.types import ErrorCode
 
 
 def hard_exit(error_code : ErrorCode) -> None:
@@ -12,9 +13,8 @@ def hard_exit(error_code : ErrorCode) -> None:
 	sys.exit(error_code)
 
 
-def conditional_exit(error_code : ErrorCode) -> None:
-	if state_manager.get_item('command') == 'headless-run':
-		hard_exit(error_code)
+def signal_exit(signum : int, frame : FrameType) -> None:
+	graceful_exit(0)
 
 
 def graceful_exit(error_code : ErrorCode) -> None:

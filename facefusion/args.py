@@ -1,9 +1,9 @@
 from facefusion import state_manager
-from facefusion.filesystem import is_image, is_video, list_directory
+from facefusion.filesystem import get_file_name, is_image, is_video, resolve_file_paths
 from facefusion.jobs import job_store
 from facefusion.normalizer import normalize_fps, normalize_padding
 from facefusion.processors.core import get_processors_modules
-from facefusion.typing import ApplyStateItem, Args
+from facefusion.types import ApplyStateItem, Args
 from facefusion.vision import create_image_resolutions, create_video_resolutions, detect_image_resolution, detect_video_fps, detect_video_resolution, pack_resolution
 
 
@@ -74,9 +74,10 @@ def apply_args(args : Args, apply_state_item : ApplyStateItem) -> None:
 	apply_state_item('face_occluder_model', args.get('face_occluder_model'))
 	apply_state_item('face_parser_model', args.get('face_parser_model'))
 	apply_state_item('face_mask_types', args.get('face_mask_types'))
+	apply_state_item('face_mask_areas', args.get('face_mask_areas'))
+	apply_state_item('face_mask_regions', args.get('face_mask_regions'))
 	apply_state_item('face_mask_blur', args.get('face_mask_blur'))
 	apply_state_item('face_mask_padding', normalize_padding(args.get('face_mask_padding')))
-	apply_state_item('face_mask_regions', args.get('face_mask_regions'))
 	# frame extraction
 	apply_state_item('trim_frame_start', args.get('trim_frame_start'))
 	apply_state_item('trim_frame_end', args.get('trim_frame_end'))
@@ -92,6 +93,8 @@ def apply_args(args : Args, apply_state_item : ApplyStateItem) -> None:
 		else:
 			apply_state_item('output_image_resolution', pack_resolution(output_image_resolution))
 	apply_state_item('output_audio_encoder', args.get('output_audio_encoder'))
+	apply_state_item('output_audio_quality', args.get('output_audio_quality'))
+	apply_state_item('output_audio_volume', args.get('output_audio_volume'))
 	apply_state_item('output_video_encoder', args.get('output_video_encoder'))
 	apply_state_item('output_video_preset', args.get('output_video_preset'))
 	apply_state_item('output_video_quality', args.get('output_video_quality'))
@@ -105,9 +108,8 @@ def apply_args(args : Args, apply_state_item : ApplyStateItem) -> None:
 	if args.get('output_video_fps') or is_video(args.get('target_path')):
 		output_video_fps = normalize_fps(args.get('output_video_fps')) or detect_video_fps(args.get('target_path'))
 		apply_state_item('output_video_fps', output_video_fps)
-	apply_state_item('skip_audio', args.get('skip_audio'))
 	# processors
-	available_processors = [ file.get('name') for file in list_directory('facefusion/processors/modules') ]
+	available_processors = [ get_file_name(file_path) for file_path in resolve_file_paths('facefusion/processors/modules') ]
 	apply_state_item('processors', args.get('processors'))
 	for processor_module in get_processors_modules(available_processors):
 		processor_module.apply_args(args, apply_state_item)
@@ -123,11 +125,15 @@ def apply_args(args : Args, apply_state_item : ApplyStateItem) -> None:
 	# download
 	apply_state_item('download_providers', args.get('download_providers'))
 	apply_state_item('download_scope', args.get('download_scope'))
+	# benchmark
+	apply_state_item('benchmark_resolutions', args.get('benchmark_resolutions'))
+	apply_state_item('benchmark_cycle_count', args.get('benchmark_cycle_count'))
 	# memory
 	apply_state_item('video_memory_strategy', args.get('video_memory_strategy'))
 	apply_state_item('system_memory_limit', args.get('system_memory_limit'))
 	# misc
 	apply_state_item('log_level', args.get('log_level'))
+	apply_state_item('halt_on_error', args.get('halt_on_error'))
 	# jobs
 	apply_state_item('job_id', args.get('job_id'))
 	apply_state_item('job_status', args.get('job_status'))
